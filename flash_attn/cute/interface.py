@@ -609,7 +609,7 @@ def _flash_attn_fwd(
             num_splits_dynamic if has_scheduler_metadata else None,
             tile_count_semaphore if has_scheduler_metadata else None,
             max_seqlen_q,
-            current_stream,
+            current_stream=current_stream,
         )
     return out, lse
 
@@ -1416,6 +1416,7 @@ def _flash_attn_fwd_combine(
     num_splits_dynamic_ptr: Optional[torch.Tensor] = None,
     semaphore_to_reset: Optional[torch.Tensor] = None,
     max_seqlen_q: Optional[int] = None,
+    use_combine_semaphore: bool = False,
     current_stream: Optional[cuda.CUstream] = None,
 ) -> None:
     """Forward combine kernel for split attention computation.
@@ -1472,6 +1473,7 @@ def _flash_attn_fwd_combine(
             assert t.is_contiguous(), f"{name} must be contiguous"
 
     head_dim = out_partial.shape[-1]
+    num_head = out_partial.shape[-2]
     num_splits = out_partial.shape[0]
     assert num_splits <= 256
     # If hdim is 96 or 192, it's faster to round them to 128 or 256 respectively
@@ -1510,6 +1512,13 @@ def _flash_attn_fwd_combine(
         optional_tensors
     )
 
+    if use_combine_semaphore:
+        combine_semaphore = torch.zeros(1, dtype=torch.int32, device="cuda")
+        combine_semaphore_tensor = from_dlpack(combine_semaphore.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=0)
+    else:
+        combine_semaphore = None
+        combine_semaphore_tensor = None
+
     if current_stream is None:
         current_stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)
 
@@ -1521,6 +1530,7 @@ def _flash_attn_fwd_combine(
         dtype,
         dtype_partial,
         head_dim,
+        num_head,
         m_block_size,
         k_block_size,
         log_max_splits,
@@ -1530,6 +1540,7 @@ def _flash_attn_fwd_combine(
         num_splits_dynamic_ptr is not None,
         semaphore_to_reset is not None,
         max_seqlen_q is not None,
+        combine_semaphore is not None,
     )
 
     if compile_key not in _flash_attn_fwd_combine.compile_cache:
@@ -1537,6 +1548,7 @@ def _flash_attn_fwd_combine(
             dtype=dtype,
             dtype_partial=dtype_partial,
             head_dim=head_dim,
+            num_head=num_head,
             m_block_size=m_block_size,
             k_block_size=k_block_size,
             log_max_splits=log_max_splits,
@@ -1567,6 +1579,7 @@ def _flash_attn_fwd_combine(
             num_splits_dynamic_tensor,
             semaphore_tensor,
             max_seqlen_q,
+            combine_semaphore_tensor,
             current_stream,
         )
 
@@ -1580,6 +1593,7 @@ def _flash_attn_fwd_combine(
         num_splits_dynamic_tensor,
         semaphore_tensor,
         max_seqlen_q,
+        combine_semaphore_tensor,
         current_stream,
     )
 
