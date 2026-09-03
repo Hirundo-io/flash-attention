@@ -364,6 +364,7 @@ class FlashAttentionBackwardSm90:
         mdV_semaphore: Optional[cute.Tensor] = None,
         aux_data: AuxData = AuxData(),
         blocksparse_tensors: Optional[BlockSparseTensors] = None,
+        mCuTotalMBlocks: Optional[cute.Tensor] = None,
         # Always keep stream as the last parameter (EnvStream: obtained implicitly via TVM FFI).
         stream: cuda.CUstream = None,
     ):
@@ -543,6 +544,7 @@ class FlashAttentionBackwardSm90:
             is_persistent=False,
             lpt=self.spt,
             head_swizzle=self.deterministic,
+            cu_total_m_blocks_ptr=mCuTotalMBlocks,
         )
 
         tile_sched_params = TileScheduler.to_underlying_arguments(tile_sched_args)
@@ -992,6 +994,8 @@ class FlashAttentionBackwardSm90:
                             producer_state_Q.advance()
                             producer_state_dO.advance()
                     else:
+                        # The wait for bwd preprocess that the dense arm above does inline sits
+                        # in _load_q_do_block_sm90, at the same point in the load order.
                         producer_state_Q, producer_state_dO = produce_block_sparse_q_loads_bwd_sm90(
                             blocksparse_tensors,
                             batch_idx,
