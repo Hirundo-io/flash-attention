@@ -63,15 +63,20 @@ jobs:
           python-version: ${{ inputs.python-version }}
 
       - name: Set CUDA and PyTorch versions
+        env:
+          PACKAGE: ${{ inputs.package }}
         run: |
           echo "MATRIX_CUDA_VERSION=$(echo ${{ inputs.cuda-version }} | awk -F \. {'print $1 $2'})" >> $GITHUB_ENV
           echo "MATRIX_TORCH_VERSION=$(echo ${{ inputs.torch-version }} | awk -F \. {'print $1 "." $2'})" >> $GITHUB_ENV
           echo "WHEEL_CUDA_VERSION=$(echo ${{ inputs.cuda-version }} | awk -F \. {'print $1'})" >> $GITHUB_ENV
           echo "MATRIX_PYTHON_VERSION=$(echo ${{ inputs.python-version }} | awk -F \. {'print $1 $2'})" >> $GITHUB_ENV
-          case "${{ inputs.package }}" in
+          # The resolved commit keys the timeout-resume cache, so a moved
+          # branch never restores another commit's archived tree.
+          echo "SOURCE_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          case "$PACKAGE" in
             fa2) echo "PACKAGE_DIR=." >> $GITHUB_ENV ;;
             fa3) echo "PACKAGE_DIR=hopper" >> $GITHUB_ENV ;;
-            *) echo "Unknown package ${{ inputs.package }}" >&2; exit 1 ;;
+            *) echo "Unknown package: $PACKAGE" >&2; exit 1 ;;
           esac
 
       - name: Free up disk space
@@ -163,9 +168,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build.tar
-          key: build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
+          key: build-${{ inputs.package }}-${{ env.SOURCE_SHA }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
           restore-keys: |
-            build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-
+            build-${{ inputs.package }}-${{ env.SOURCE_SHA }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-
 
       - name: Unpack build cache
         run: |
@@ -229,7 +234,7 @@ jobs:
         if: always() && steps.build_wheel.outputs.build_exit_code == 124
         uses: actions/cache/save@v4
         with:
-          key: build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
+          key: build-${{ inputs.package }}-${{ env.SOURCE_SHA }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: build.tar
 
       - name: Log Built Wheels
@@ -238,6 +243,7 @@ jobs:
 
       - name: Get Release with tag
         id: get_current_release
+        if: inputs.upload-to-release
         uses: joutvhu/get-release@v1
         with:
           tag_name: ${{ inputs.release-version }}
