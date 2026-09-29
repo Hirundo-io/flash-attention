@@ -776,6 +776,9 @@ setup(
             "flash_attn.egg-info",
             "flash_attn.cute",
             "flash_attn.cute.*",
+            # FA3 (`flash_attn_3`) is built separately from `hopper/`.
+            "hopper",
+            "hopper.*",
         )
     ),
     author="Tri Dao",

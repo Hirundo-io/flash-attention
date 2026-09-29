@@ -32,6 +32,15 @@ on:
         description: "Upload wheel to this release"
         required: false
         type: string
+      source-ref:
+        description: "Source ref to build; defaults to the release version"
+        required: false
+        type: string
+      package:
+        description: "Package to build: fa2 (flash_attn, repo root) or fa3 (flash_attn_3, hopper/)"
+        required: false
+        type: string
+        default: fa2
 
 defaults:
   run:
@@ -40,12 +49,12 @@ defaults:
 jobs:
   build-wheel:
     runs-on: ${{ inputs.runs-on }}
-    name: Build wheel (${{ inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }})
+    name: Build ${{ inputs.package }} wheel (${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }})
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release-version }}
+          ref: ${{ inputs.source-ref || inputs.release-version }}
           submodules: recursive
 
       - name: Set up Python
@@ -59,6 +68,11 @@ jobs:
           echo "MATRIX_TORCH_VERSION=$(echo ${{ inputs.torch-version }} | awk -F \. {'print $1 "." $2'})" >> $GITHUB_ENV
           echo "WHEEL_CUDA_VERSION=$(echo ${{ inputs.cuda-version }} | awk -F \. {'print $1'})" >> $GITHUB_ENV
           echo "MATRIX_PYTHON_VERSION=$(echo ${{ inputs.python-version }} | awk -F \. {'print $1 $2'})" >> $GITHUB_ENV
+          case "${{ inputs.package }}" in
+            fa2) echo "PACKAGE_DIR=." >> $GITHUB_ENV ;;
+            fa3) echo "PACKAGE_DIR=hopper" >> $GITHUB_ENV ;;
+            *) echo "Unknown package ${{ inputs.package }}" >&2; exit 1 ;;
+          esac
 
       - name: Free up disk space
         if: ${{ runner.os == 'Linux' }}
@@ -141,17 +155,17 @@ jobs:
         # but this project's setup.py hard-codes -std=c++17.
         run: |
           if [ "$(echo "$MATRIX_TORCH_VERSION" | cut -d. -f2)" -ge 12 ]; then
-            sed -i 's/std=c++17/std=c++20/g' setup.py
-            grep -n 'std=c++' setup.py || true
+            sed -i 's/std=c++17/std=c++20/g' "$PACKAGE_DIR/setup.py"
+            grep -n 'std=c++' "$PACKAGE_DIR/setup.py" || true
           fi
 
       - name: Restore build cache
         uses: actions/cache/restore@v4
         with:
           path: build.tar
-          key: build-${{ inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
+          key: build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
           restore-keys: |
-            build-${{ inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-
+            build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-
 
       - name: Unpack build cache
         run: |
@@ -190,7 +204,7 @@ jobs:
 
           # 5h timeout since GH allows max 6h and we want some buffer
           EXIT_CODE=0
-          timeout 5h python setup.py bdist_wheel --dist-dir=dist || EXIT_CODE=$?
+          (cd "$PACKAGE_DIR" && timeout 5h python setup.py bdist_wheel --dist-dir="$GITHUB_WORKSPACE/dist") || EXIT_CODE=$?
 
           if [ $EXIT_CODE -eq 0 ]; then
             tmpname=cu${WHEEL_CUDA_VERSION}torch${MATRIX_TORCH_VERSION}cxx11abi${{ inputs.cxx11_abi }}
@@ -215,7 +229,7 @@ jobs:
         if: always() && steps.build_wheel.outputs.build_exit_code == 124
         uses: actions/cache/save@v4
         with:
-          key: build-${{ inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
+          key: build-${{ inputs.package }}-${{ inputs.source-ref || inputs.release-version }}-${{ inputs.python-version }}-${{ inputs.cuda-version }}-${{ inputs.torch-version }}-${{ inputs.cxx11_abi }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: build.tar
 
       - name: Log Built Wheels
